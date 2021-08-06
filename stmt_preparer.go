@@ -4,27 +4,27 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 )
 
 type statementPreparer interface {
-	prepareStatement(ctx context.Context,
-		conn *pgx.Conn,
-		sql string,
-		name string) (*pgconn.StatementDescription, error)
+	prepareStatement(ctx context.Context, sql, name string) error
 }
 
-type pgxStatementPreparer struct{}
+type pgxStatementPreparer struct {
+	conn *pgx.Conn
+}
 
-func (*pgxStatementPreparer) prepareStatement(ctx context.Context,
-	conn *pgx.Conn,
+func newPGXStatementPreparer(conn *pgx.Conn) *pgxStatementPreparer {
+	return &pgxStatementPreparer{conn}
+}
+
+func (sp *pgxStatementPreparer) prepareStatement(ctx context.Context,
 	sql string,
-	name string) (*pgconn.StatementDescription, error) {
-	stmt, err := conn.Prepare(ctx, name, sql)
-	if err != nil {
-		return nil, fmt.Errorf("preparing statement: %w", err)
+	name string) error {
+	if _, err := sp.conn.Prepare(ctx, name, sql); err != nil {
+		return fmt.Errorf("preparing statement on connection: %w", err)
 	}
 
-	return stmt, nil
+	return nil
 }

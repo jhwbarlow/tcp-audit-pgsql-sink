@@ -3,83 +3,53 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/jhwbarlow/tcp-audit/pkg/event"
 	"github.com/jhwbarlow/tcp-audit/pkg/sink"
 )
 
-const (
-	tableCreateSQL = `
-CREATE TABLE tcp_events (
-	uid         TEXT PRIMARY KEY,
-	timestamp   TIMESTAMP,
-	pid_on_cpu  INTEGER,
-	comm_on_cpu TEXT,
-	src_ip      INET,
-	dst_ip      INET,
-	src_port    INTEGER,
-	dst_port    INTEGER,
-	old_state   TEXT,
-	new_state   TEXT
-)`
-
-	insertSQL = `
-INSERT INTO tcp_events (
-	uid,
-	timestamp,  
-	pid_on_cpu,
-	comm_on_cpu,
-	src_ip,
-	dst_ip,
-	src_port,
-	dst_port,
-	old_state,
-	new_state
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-
-	insertSQLStmtName = "tcp_events_insert"
-)
-
 type Sinker struct {
-	configGetter configGetter
-
-	conn       *pgx.Conn
-	insertStmt *pgconn.StatementDescription
+	inserter inserter
 }
 
 func New() (sink.Sinker, error) {
-	connector := new(pgxConnector)
-	tableCreator := new(pgxTableCreator)
-	stmtPreparer := new(pgxStatementPreparer)
-
-	return construct(connector, tableCreator, stmtPreparer)
-}
-
-func construct(connector connector,
-	tableCreator tableCreator,
-	stmtPreparer statementPreparer) (sink.Sinker, error) {
-	conn, err := connector.connect(context.TODO(), connString)
+	configGetter := new(fixedStringConfigGetter)
+	connector := newPGXConnector(configGetter)
+	conn, err := connect(connector)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
 
-	if err := tableCreator.createTable(context.TODO(), conn, tableCreateSQL); err != nil {
-		return nil, fmt.Errorf("creating tcp_events table: %w", err)
+	tableCreator := newPGXTableCreator(conn)
+	if err := createTable(tableCreator); err != nil {
+		return nil, fmt.Errorf("creating table: %w", err)
 	}
 
-	insertStmt, err := stmtPreparer.prepareStatement(context.TODO(), conn, insertSQL, insertSQLStmtName)
+	stmtPreparer := newPGXStatementPreparer(conn)
+	execer := newPGXExecer(conn)
+
+	inserter, err := newPreparedStatementInserter(stmtPreparer, execer)
 	if err != nil {
-		return nil, fmt.Errorf("preparing insert statement: %w", err)
+		return nil, fmt.Errorf("constructing inserter: %w", err)
 	}
 
+	return construct(inserter), nil
+}
+
+func construct(inserter inserter) *Sinker {
 	return &Sinker{
-		conn:       conn,
-		insertStmt: insertStmt,
-	}, nil
+		inserter: inserter,
+	}
+}
+
+func connect(connector connector) (*pgx.Conn, error) {
+	return connector.connect(context.TODO())
+}
+
+func createTable(tableCreator tableCreator) error {
+	return tableCreator.createTable(context.TODO())
 }
 
 func (s *Sinker) Sink(event *event.Event) error {
@@ -94,8 +64,7 @@ func (s *Sinker) Sink(event *event.Event) error {
 	oldState := event.OldState.String()
 	newState := event.NewState.String()
 
-	if _, err := s.conn.Exec(context.TODO(),
-		insertSQLStmtName,
+	if err := s.inserter.insert(context.TODO(),
 		uid,
 		time,
 		pid,
@@ -113,10 +82,7 @@ func (s *Sinker) Sink(event *event.Event) error {
 }
 
 func (s *Sinker) Close() error {
-	log.Printf("Closing database connection: %s:%d",
-		s.conn.Config().Host,
-		s.conn.Config().Port)
-	if err := s.conn.Close(context.TODO()); err != nil {
+	if err := s.inserter.close(context.TODO()); err != nil {
 		return fmt.Errorf("closing connection: %w", err)
 	}
 
