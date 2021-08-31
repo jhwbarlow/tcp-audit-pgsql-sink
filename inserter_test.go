@@ -86,10 +86,7 @@ func TestInsert(t *testing.T) {
 	mockOldState := "mock-old-state"
 	mockNewState := "mock-new-state"
 
-	inserter, err := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
-	if err != nil {
-		t.Errorf("expected nil constructor error, got %q (of type %T)", err, err)
-	}
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
 
 	if err := inserter.insert(context.TODO(),
 		mockUID,
@@ -134,12 +131,9 @@ func TestInsertError(t *testing.T) {
 	mockOldState := "mock-old-state"
 	mockNewState := "mock-new-state"
 
-	inserter, err := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
-	if err != nil {
-		t.Errorf("expected nil constructor error, got %q (of type %T)", err, err)
-	}
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
 
-	err = inserter.insert(context.TODO(),
+	err := inserter.insert(context.TODO(),
 		mockUID,
 		mockTime,
 		mockPID,
@@ -161,12 +155,13 @@ func TestInsertError(t *testing.T) {
 	}
 }
 
-func TestInserterConstructor(t *testing.T) {
+func TestInserterPrepare(t *testing.T) {
 	mockStmtPreparer := newMockStatementPreparer(nil)
 	mockExecer := newMockExecer(nil)
 
-	if _, err := newPreparedStatementInserter(mockStmtPreparer, mockExecer); err != nil {
-		t.Errorf("expected nil constructor error, got %q (of type %T)", err, err)
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+	if err := inserter.prepare(context.TODO()); err != nil {
+		t.Errorf("expected nil error, got %q (of type %T)", err, err)
 	}
 
 	if !mockStmtPreparer.prepareStatementCalled {
@@ -184,12 +179,13 @@ func TestInserterConstructor(t *testing.T) {
 	t.Logf("statementPreparer received SQL: %q", mockStmtPreparer.receivedSQL)
 }
 
-func TestInserterConstructorStatementPreparerError(t *testing.T) {
+func TestInserterPrepareStatementPreparerError(t *testing.T) {
 	mockError := errors.New("mock statement preparer error")
 	mockStmtPreparer := newMockStatementPreparer(mockError)
 	mockExecer := newMockExecer(nil)
 
-	_, err := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+	err := inserter.prepare(context.TODO())
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -202,16 +198,28 @@ func TestInserterConstructorStatementPreparerError(t *testing.T) {
 }
 
 func TestInserterClose(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil)	
+	mockExecer := newMockExecer(nil)
+
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+
+	if err := inserter.close(context.TODO()); err != nil {
+		t.Errorf("expected nil error, got %q (of type %T)", err, err)
+	}
+
+	if !mockExecer.closeCalled {
+		t.Error("expected execer to be closed, but was not")
+	}
+}
+
+func TestInserterCloseError(t *testing.T) {
 	mockStmtPreparer := newMockStatementPreparer(nil)
 	mockError := errors.New("mock exec close error")
 	mockExecer := newMockExecer(mockError)
 
-	inserter, err := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
-	if err != nil {
-		t.Errorf("expected nil constructor error, got %q (of type %T)", err, err)
-	}
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
 
-	err = inserter.close(context.TODO())
+	err := inserter.close(context.TODO())
 	if err == nil {
 		t.Error("expected error, got nil")
 	}

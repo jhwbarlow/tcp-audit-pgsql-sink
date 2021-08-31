@@ -5,9 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v4"
-	"github.com/jhwbarlow/tcp-audit/pkg/event"
-	"github.com/jhwbarlow/tcp-audit/pkg/sink"
+	"github.com/jhwbarlow/tcp-audit-common/pkg/event"
+	"github.com/jhwbarlow/tcp-audit-common/pkg/sink"
 )
 
 type Sinker struct {
@@ -15,41 +14,33 @@ type Sinker struct {
 }
 
 func New() (sink.Sinker, error) {
-	configGetter := new(fixedStringConfigGetter)
+	configGetter := new(envVarConfigGetter)
 	connector := newPGXConnector(configGetter)
-	conn, err := connect(connector)
+	conn, err := connector.connect(context.TODO())
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
 
 	tableCreator := newPGXTableCreator(conn)
-	if err := createTable(tableCreator); err != nil {
+	stmtPreparer := newPGXStatementPreparer(conn)
+	execer := newPGXExecer(conn)
+	inserter := newPreparedStatementInserter(stmtPreparer, execer)
+
+	return newSinker(tableCreator, inserter)
+}
+
+func newSinker(tableCreator tableCreator, inserter inserter) (*Sinker, error) {
+	if err := tableCreator.createTable(context.TODO()); err != nil {
 		return nil, fmt.Errorf("creating table: %w", err)
 	}
 
-	stmtPreparer := newPGXStatementPreparer(conn)
-	execer := newPGXExecer(conn)
-
-	inserter, err := newPreparedStatementInserter(stmtPreparer, execer)
-	if err != nil {
-		return nil, fmt.Errorf("constructing inserter: %w", err)
+	if err := inserter.prepare(context.TODO()); err != nil {
+		return nil, fmt.Errorf("preparing inserter: %w", err)
 	}
 
-	return construct(inserter), nil
-}
-
-func construct(inserter inserter) *Sinker {
 	return &Sinker{
 		inserter: inserter,
-	}
-}
-
-func connect(connector connector) (*pgx.Conn, error) {
-	return connector.connect(context.TODO())
-}
-
-func createTable(tableCreator tableCreator) error {
-	return tableCreator.createTable(context.TODO())
+	}, nil
 }
 
 func (s *Sinker) Sink(event *event.Event) error {

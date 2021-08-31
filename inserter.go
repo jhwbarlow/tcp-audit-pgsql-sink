@@ -25,7 +25,10 @@ INSERT INTO tcp_events (
 	insertSQLStmtName = "tcp_events_insert"
 )
 
+// Inserter is an interface which describes objects which inserts
+// TCP state-change data into the backing store.
 type inserter interface {
+	prepare(ctx context.Context) error
 	insert(ctx context.Context,
 		uid string,
 		time time.Time,
@@ -40,23 +43,35 @@ type inserter interface {
 	close(ctx context.Context) error
 }
 
+// PreparedStatementInserter inserts TCP state-change data into the
+// database using a SQL prepared statement.
 type preparedStatementInserter struct {
-	execer execer
+	execer       execer
+	stmtPreparer statementPreparer
 }
 
 func newPreparedStatementInserter(stmtPreparer statementPreparer,
-	execer execer) (*preparedStatementInserter, error) {
-	if err := stmtPreparer.prepareStatement(context.TODO(),
-		insertSQL,
-		insertSQLStmtName); err != nil {
-		return nil, fmt.Errorf("preparing insert statement: %w", err)
-	}
-
+	execer execer) *preparedStatementInserter {
 	return &preparedStatementInserter{
-		execer: execer,
-	}, nil
+		stmtPreparer: stmtPreparer,
+		execer:       execer,
+	}
 }
 
+// Prepare prepares the SQL insert statement for future use in the insert
+// method.
+func (i *preparedStatementInserter) prepare(ctx context.Context) error {
+	if err := i.stmtPreparer.prepareStatement(ctx,
+		insertSQL,
+		insertSQLStmtName); err != nil {
+		return fmt.Errorf("preparing insert statement: %w", err)
+	}
+
+	return nil
+}
+
+// Insert uses the prepared SQL insert statement created in the prepare
+// method to insert TCP state-change data into the database.
 func (i *preparedStatementInserter) insert(ctx context.Context,
 	uid string,
 	time time.Time,
@@ -74,8 +89,8 @@ func (i *preparedStatementInserter) insert(ctx context.Context,
 		time,
 		pid,
 		comm,
-		srcIP,
-		dstIP,
+		srcIP.To4(),
+		dstIP.To4(),
 		srcPort,
 		dstPort,
 		oldState,
@@ -86,6 +101,7 @@ func (i *preparedStatementInserter) insert(ctx context.Context,
 	return nil
 }
 
+// Close releases the resources held by this Inserter.
 func (i *preparedStatementInserter) close(ctx context.Context) error {
 	if err := i.execer.close(ctx); err != nil {
 		return fmt.Errorf("closing execer: %w", err)

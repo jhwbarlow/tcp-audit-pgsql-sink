@@ -7,12 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jhwbarlow/tcp-audit/pkg/event"
-	"github.com/jhwbarlow/tcp-audit/pkg/tcpstate"
+	"github.com/jhwbarlow/tcp-audit-common/pkg/event"
+	"github.com/jhwbarlow/tcp-audit-common/pkg/tcpstate"
 )
 
 type mockInserter struct {
-	errorToReturn error
+	errorToReturnOnPrepare error
+	errorToReturnOnInsert  error
+	errorToReturnOnClose   error
+
+	prepareCalled bool
 	insertCalled  bool
 	closeCalled   bool
 
@@ -27,8 +31,24 @@ type mockInserter struct {
 	receivedNewState string
 }
 
-func newMockInserter(errorToReturn error) *mockInserter {
-	return &mockInserter{errorToReturn: errorToReturn}
+func newMockInserter(errorToReturnOnPrepare error,
+	errorToReturnOnInsert error,
+	errorToReturnOnClose error) *mockInserter {
+	return &mockInserter{
+		errorToReturnOnPrepare: errorToReturnOnPrepare,
+		errorToReturnOnInsert:  errorToReturnOnInsert,
+		errorToReturnOnClose:   errorToReturnOnClose,
+	}
+}
+
+func (mi *mockInserter) prepare(ctx context.Context) error {
+	mi.prepareCalled = true
+
+	if mi.errorToReturnOnPrepare != nil {
+		return mi.errorToReturnOnPrepare
+	}
+
+	return nil
 }
 
 func (mi *mockInserter) insert(ctx context.Context,
@@ -54,8 +74,8 @@ func (mi *mockInserter) insert(ctx context.Context,
 	mi.receivedOldState = oldState
 	mi.receivedNewState = newState
 
-	if mi.errorToReturn != nil {
-		return mi.errorToReturn
+	if mi.errorToReturnOnInsert != nil {
+		return mi.errorToReturnOnInsert
 	}
 
 	return nil
@@ -64,16 +84,89 @@ func (mi *mockInserter) insert(ctx context.Context,
 func (mi *mockInserter) close(ctx context.Context) error {
 	mi.closeCalled = true
 
-	if mi.errorToReturn != nil {
-		return mi.errorToReturn
+	if mi.errorToReturnOnClose != nil {
+		return mi.errorToReturnOnClose
 	}
 
 	return nil
 }
 
+type mockTableCreator struct {
+	errorToReturn error
+
+	createTableCalled bool
+}
+
+func newMockTableCreator(errorToReturn error) *mockTableCreator {
+	return &mockTableCreator{errorToReturn: errorToReturn}
+}
+
+func (mtc *mockTableCreator) createTable(ctx context.Context) error {
+	mtc.createTableCalled = true
+
+	if mtc.errorToReturn != nil {
+		return mtc.errorToReturn
+	}
+
+	return nil
+}
+
+func TestSinkerConstructor(t *testing.T) {
+	mockTableCreator := newMockTableCreator(nil)
+	mockInserter := newMockInserter(nil, nil, nil)
+	_, err := newSinker(mockTableCreator, mockInserter)
+	if err != nil {
+		t.Errorf("expected nil error, got %q (of type %T)", err, err)
+	}
+
+	if !mockTableCreator.createTableCalled {
+		t.Error("expected table creator to be called, but was not")
+	}
+
+	if !mockInserter.prepareCalled {
+		t.Error("expected inserter prepare() to be called, but was not")
+	}
+}
+
+func TestSinkerConstructorTableCreatorError(t *testing.T) {
+	mockError := errors.New("mock table creator error")
+	mockTableCreator := newMockTableCreator(mockError)
+	mockInserter := newMockInserter(nil, nil, nil)
+	_, err := newSinker(mockTableCreator, mockInserter)
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	t.Logf("got error %q (of type %T)", err, err)
+
+	if !errors.Is(err, mockError) {
+		t.Errorf("expected error chain to include %q, but did not", mockError)
+	}
+}
+
+func TestSinkerConstructorInserterPrepareError(t *testing.T) {
+	mockTableCreator := newMockTableCreator(nil)
+	mockError := errors.New("mock inserter prepare error")
+	mockInserter := newMockInserter(mockError, nil, nil)
+	_, err := newSinker(mockTableCreator, mockInserter)
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+
+	t.Logf("got error %q (of type %T)", err, err)
+
+	if !errors.Is(err, mockError) {
+		t.Errorf("expected error chain to include %q, but did not", mockError)
+	}
+}
+
 func TestSink(t *testing.T) {
-	mockInserter := new(mockInserter)
-	sinker := construct(mockInserter)
+	mockTableCreator := newMockTableCreator(nil)
+	mockInserter := newMockInserter(nil, nil, nil)
+	sinker, err := newSinker(mockTableCreator, mockInserter)
+	if err != nil {
+		t.Errorf("expected nil Sinker construction error, got %q (of type %T)", err, err)
+	}
 
 	mockEvent := &event.Event{
 		Time:         time.Now(),
@@ -151,9 +244,13 @@ func TestSink(t *testing.T) {
 }
 
 func TestSinkInserterError(t *testing.T) {
-	mockError := errors.New("mock inserter error")
-	mockInserter := newMockInserter(mockError)
-	sinker := construct(mockInserter)
+	mockTableCreator := newMockTableCreator(nil)
+	mockError := errors.New("mock inserter insert error")
+	mockInserter := newMockInserter(nil, mockError, nil)
+	sinker, err := newSinker(mockTableCreator, mockInserter)
+	if err != nil {
+		t.Errorf("expected nil Sinker construction error, got %q (of type %T)", err, err)
+	}
 
 	mockEvent := &event.Event{
 		Time:         time.Now(),
@@ -167,7 +264,7 @@ func TestSinkInserterError(t *testing.T) {
 		NewState:     tcpstate.StateSynReceived,
 	}
 
-	err := sinker.Sink(mockEvent)
+	err = sinker.Sink(mockEvent)
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -180,8 +277,12 @@ func TestSinkInserterError(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
+	mockTableCreator := newMockTableCreator(nil)
 	mockInserter := new(mockInserter)
-	sinker := construct(mockInserter)
+	sinker, err := newSinker(mockTableCreator, mockInserter)
+	if err != nil {
+		t.Errorf("expected nil Sinker construction error, got %q (of type %T)", err, err)
+	}
 
 	if err := sinker.Close(); err != nil {
 		t.Errorf("expected nil error, got %q (of type %T)", err, err)
@@ -193,11 +294,15 @@ func TestClose(t *testing.T) {
 }
 
 func TestCloseInserterError(t *testing.T) {
+	mockTableCreator := newMockTableCreator(nil)
 	mockError := errors.New("mock inserter close error")
-	mockInserter := newMockInserter(mockError)
-	sinker := construct(mockInserter)
+	mockInserter := newMockInserter(nil, nil, mockError)
+	sinker, err := newSinker(mockTableCreator, mockInserter)
+	if err != nil {
+		t.Errorf("expected nil Sinker construction error, got %q (of type %T)", err, err)
+	}
 
-	err := sinker.Close()
+	err = sinker.Close()
 	if err == nil {
 		t.Error("expected error, got nil")
 	}

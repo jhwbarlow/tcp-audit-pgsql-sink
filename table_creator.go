@@ -25,10 +25,14 @@ CREATE TABLE tcp_events (
 )`
 )
 
+// TableCreator is an interface which describes objects which create
+// the database table required to store TCP state-change events.
 type tableCreator interface {
 	createTable(ctx context.Context) error
 }
 
+// PGXTableCreator creates the database table required to store TCP
+// state-change events using the PGX library.
 type pgxTableCreator struct {
 	conn *pgx.Conn
 }
@@ -37,13 +41,16 @@ func newPGXTableCreator(conn *pgx.Conn) *pgxTableCreator {
 	return &pgxTableCreator{conn}
 }
 
+// CreateTable creates the table in the database if it does not already exist.
 func (tc *pgxTableCreator) createTable(ctx context.Context) error {
 	if _, err := tc.conn.Exec(ctx, tableCreateSQL); err != nil {
 		if err, ok := err.(*pgconn.PgError); ok && err.Code == pgerrcode.DuplicateTable {
 			// Table already created - nothing to do!
+			// TODO: This appears the create an error in the Postgres log.
+			// Perhaps a CREATE TABLE IF NOT EXISTS would be better here.
 			return nil
 		}
-		
+
 		return fmt.Errorf("creating tcp_events table: %w", err)
 	}
 

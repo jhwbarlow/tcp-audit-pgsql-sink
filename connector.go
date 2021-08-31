@@ -7,10 +7,8 @@ import (
 	"github.com/jackc/pgx/v4"
 )
 
-type connector interface {
-	connect(ctx context.Context) (*pgx.Conn, error)
-}
-
+// PGXConnector creates a connection to a PostgreSQL database using the
+// PGX library.
 type pgxConnector struct {
 	configGetter configGetter
 }
@@ -19,6 +17,8 @@ func newPGXConnector(configGetter configGetter) *pgxConnector {
 	return &pgxConnector{configGetter}
 }
 
+// Connect creates a connection to the PostgreSQL database described by the
+// configuration returned by the ConfigGetter supplied in the constructor.
 func (c *pgxConnector) connect(ctx context.Context) (*pgx.Conn, error) {
 	connString, err := c.configGetter.config()
 	if err != nil {
