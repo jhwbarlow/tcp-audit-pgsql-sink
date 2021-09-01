@@ -11,7 +11,7 @@ import (
 
 const (
 	tableCreateSQL = `
-CREATE TABLE tcp_events (
+CREATE TABLE IF NOT EXISTS tcp_events (
 	uid         TEXT PRIMARY KEY,
 	timestamp   TIMESTAMP,
 	pid_on_cpu  INTEGER,
@@ -46,8 +46,7 @@ func (tc *pgxTableCreator) createTable(ctx context.Context) error {
 	if _, err := tc.conn.Exec(ctx, tableCreateSQL); err != nil {
 		if err, ok := err.(*pgconn.PgError); ok && err.Code == pgerrcode.DuplicateTable {
 			// Table already created - nothing to do!
-			// TODO: This appears the create an error in the Postgres log.
-			// Perhaps a CREATE TABLE IF NOT EXISTS would be better here.
+			// This should not happen as we use CREATE TABLE IF NOT EXISTS, but it is a easy check to do.
 			return nil
 		}
 
