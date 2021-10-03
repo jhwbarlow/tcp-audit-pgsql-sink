@@ -12,8 +12,8 @@ type mockStatementPreparer struct {
 	errorToReturn error
 
 	prepareStatementCalled   bool
-	receivedSQL              string
-	receivedPreparedStmtName string
+	receivedSQL              string // TODO: Should be a slice
+	receivedPreparedStmtName string // TODO: Should be a slice
 }
 
 func newMockStatementPreparer(errorToReturn error) *mockStatementPreparer {
@@ -37,10 +37,11 @@ func (msp *mockStatementPreparer) prepareStatement(ctx context.Context,
 type mockExecer struct {
 	errorToReturn error
 
-	execCalled   bool
-	closeCalled  bool
-	receivedSQL  string
-	receivedArgs []interface{}
+	execCalled    bool
+	closeCalled   bool
+	receivedSQL   string
+	receivedArgs  []interface{}
+	receivedStmts []*sqlStatement
 }
 
 func newMockExecer(errorToReturn error) *mockExecer {
@@ -54,6 +55,17 @@ func (me *mockExecer) exec(ctx context.Context,
 	me.execCalled = true
 	me.receivedSQL = sql
 	me.receivedArgs = arguments
+
+	if me.errorToReturn != nil {
+		return me.errorToReturn
+	}
+
+	return nil
+}
+
+func (me *mockExecer) execMultiple(ctx context.Context, stmts ...*sqlStatement) error {
+	me.execCalled = true
+	me.receivedStmts = stmts
 
 	if me.errorToReturn != nil {
 		return me.errorToReturn
@@ -85,6 +97,7 @@ func TestInsert(t *testing.T) {
 	mockDstPort := uint16(7337)
 	mockOldState := "mock-old-state"
 	mockNewState := "mock-new-state"
+	var mockSocketInfo *socketInfo
 
 	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
 
@@ -98,7 +111,8 @@ func TestInsert(t *testing.T) {
 		mockSrcPort,
 		mockDstPort,
 		mockOldState,
-		mockNewState); err != nil {
+		mockNewState,
+		mockSocketInfo); err != nil {
 		t.Errorf("expected nil error, got %q (of type %T)", err, err)
 	}
 
@@ -130,6 +144,7 @@ func TestInsertError(t *testing.T) {
 	mockDstPort := uint16(7337)
 	mockOldState := "mock-old-state"
 	mockNewState := "mock-new-state"
+	var mockSocketInfo *socketInfo
 
 	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
 
@@ -143,7 +158,8 @@ func TestInsertError(t *testing.T) {
 		mockSrcPort,
 		mockDstPort,
 		mockOldState,
-		mockNewState)
+		mockNewState,
+		mockSocketInfo)
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -198,7 +214,7 @@ func TestInserterPrepareStatementPreparerError(t *testing.T) {
 }
 
 func TestInserterClose(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)	
+	mockStmtPreparer := newMockStatementPreparer(nil)
 	mockExecer := newMockExecer(nil)
 
 	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)

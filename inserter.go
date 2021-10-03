@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	insertSQL = `
+	insertTCPEventsTableSQL = `
 INSERT INTO tcp_events (
 	uid,
 	timestamp,  
@@ -22,7 +22,20 @@ INSERT INTO tcp_events (
 	new_state
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
-	insertSQLStmtName = "tcp_events_insert"
+	insertTCPEventsTableSQLStmtName = "tcp_events_insert"
+
+	insertSocketInfoTableSQL = `
+INSERT INTO tcp_events_socket_info (
+	uid,
+	tcp_event_uid,
+	id,
+	inode,
+	user_id,
+	group_id,
+	state
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+	insertSocketInfoTableSQLStmtName = "tcp_events_socket_info_insert"
 )
 
 // Inserter is an interface which describes objects which inserts
@@ -39,7 +52,8 @@ type inserter interface {
 		srcPort uint16,
 		dstPort uint16,
 		oldState string,
-		newState string) error
+		newState string,
+		socketInfo *socketInfo) error
 	close(ctx context.Context) error
 }
 
@@ -58,19 +72,25 @@ func newPreparedStatementInserter(stmtPreparer statementPreparer,
 	}
 }
 
-// Prepare prepares the SQL insert statement for future use in the insert
+// Prepare prepares the SQL insert statements for future use in the insert
 // method.
 func (i *preparedStatementInserter) prepare(ctx context.Context) error {
 	if err := i.stmtPreparer.prepareStatement(ctx,
-		insertSQL,
-		insertSQLStmtName); err != nil {
-		return fmt.Errorf("preparing insert statement: %w", err)
+		insertTCPEventsTableSQL,
+		insertTCPEventsTableSQLStmtName); err != nil {
+		return fmt.Errorf("preparing insert tcp_events statement: %w", err)
+	}
+
+	if err := i.stmtPreparer.prepareStatement(ctx,
+		insertSocketInfoTableSQL,
+		insertSocketInfoTableSQLStmtName); err != nil {
+		return fmt.Errorf("preparing insert tcp_events_socket_info statement: %w", err)
 	}
 
 	return nil
 }
 
-// Insert uses the prepared SQL insert statement created in the prepare
+// Insert uses the prepared SQL insert statements created in the prepare
 // method to insert TCP state-change data into the database.
 func (i *preparedStatementInserter) insert(ctx context.Context,
 	uid string,
@@ -82,9 +102,28 @@ func (i *preparedStatementInserter) insert(ctx context.Context,
 	srcPort uint16,
 	dstPort uint16,
 	oldState string,
-	newState string) error {
-	if err := i.execer.exec(context.TODO(),
-		insertSQLStmtName,
+	newState string,
+	socketInfo *socketInfo) error {
+	if socketInfo == nil {
+		if err := i.execer.exec(context.TODO(),
+			insertTCPEventsTableSQLStmtName,
+			uid,
+			time,
+			pid,
+			comm,
+			srcIP.To4(),
+			dstIP.To4(),
+			srcPort,
+			dstPort,
+			oldState,
+			newState); err != nil {
+			return fmt.Errorf("inserting into tcp_events: %w", err)
+		}
+
+		return nil
+	}
+
+	tcpEventsSQLStatement := newSQLStatement(insertTCPEventsTableSQLStmtName,
 		uid,
 		time,
 		pid,
@@ -94,8 +133,20 @@ func (i *preparedStatementInserter) insert(ctx context.Context,
 		srcPort,
 		dstPort,
 		oldState,
-		newState); err != nil {
-		return fmt.Errorf("inserting into tcp_events: %w", err)
+		newState)
+	socketInfoSQLStatement := newSQLStatement(insertSocketInfoTableSQLStmtName,
+		socketInfo.uid,
+		uid,
+		socketInfo.id,
+		socketInfo.iNode,
+		socketInfo.userID,
+		socketInfo.groupID,
+		socketInfo.state)
+
+	if err := i.execer.execMultiple(context.TODO(),
+		tcpEventsSQLStatement,
+		socketInfoSQLStatement); err != nil {
+		return fmt.Errorf("inserting into tcp_events or tcp_events_socket_info: %w", err)
 	}
 
 	return nil

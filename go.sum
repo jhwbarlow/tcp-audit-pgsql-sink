@@ -68,6 +68,8 @@ github.com/jackc/puddle v0.0.0-20190608224051-11cab39313c9/go.mod h1:m4B5Dj62Y0f
 github.com/jackc/puddle v1.1.3/go.mod h1:m4B5Dj62Y0fbyuIc15OsIqK0+JU8nkqQjsgx7dvjSWk=
 github.com/jhwbarlow/tcp-audit-common v0.0.0-20210831195703-56b4e4c3ea54 h1:IR6ftuDv4kxWJOnCkWPkDK/RbUWzSTetPllqowBMM2c=
 github.com/jhwbarlow/tcp-audit-common v0.0.0-20210831195703-56b4e4c3ea54/go.mod h1:mYDtIXA9qM/Uoom42k/ONd0tko0+LdFsxgiKeQ/9Y0g=
+github.com/jhwbarlow/tcp-audit-common v0.0.0-20210928211236-5e6841819533 h1:Ph8IppvKYux16Z+EK6FToTlMRINbQVZDAB98T42kCic=
+github.com/jhwbarlow/tcp-audit-common v0.0.0-20210928211236-5e6841819533/go.mod h1:mYDtIXA9qM/Uoom42k/ONd0tko0+LdFsxgiKeQ/9Y0g=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
 github.com/konsorten/go-windows-terminal-sequences v1.0.2/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=

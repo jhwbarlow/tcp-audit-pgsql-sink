@@ -30,7 +30,7 @@ func New() (sink.Sinker, error) {
 }
 
 func newSinker(tableCreator tableCreator, inserter inserter) (*Sinker, error) {
-	if err := tableCreator.createTable(context.TODO()); err != nil {
+	if err := tableCreator.createTables(context.TODO()); err != nil {
 		return nil, fmt.Errorf("creating table: %w", err)
 	}
 
@@ -55,6 +55,18 @@ func (s *Sinker) Sink(event *event.Event) error {
 	oldState := event.OldState.String()
 	newState := event.NewState.String()
 
+	var sockInfo *socketInfo
+	if event.SocketInfo != nil {
+		sockInfo = &socketInfo{
+			uid:     uuid.NewString(),
+			id:      event.SocketInfo.ID,
+			iNode:   event.SocketInfo.INode,
+			userID:  event.SocketInfo.UID,
+			groupID: event.SocketInfo.GID,
+			state:   event.SocketInfo.SocketState.String(),
+		}
+	}
+
 	if err := s.inserter.insert(context.TODO(),
 		uid,
 		time,
@@ -65,7 +77,8 @@ func (s *Sinker) Sink(event *event.Event) error {
 		srcPort,
 		dstPort,
 		oldState,
-		newState); err != nil {
+		newState,
+		sockInfo); err != nil {
 		return fmt.Errorf("inserting event: %w", err)
 	}
 

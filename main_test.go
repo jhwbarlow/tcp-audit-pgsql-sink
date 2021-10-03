@@ -20,15 +20,16 @@ type mockInserter struct {
 	insertCalled  bool
 	closeCalled   bool
 
-	receivedTime     time.Time
-	receivedPID      int
-	receivedComm     string
-	receivedSrcIP    net.IP
-	receivedDstIP    net.IP
-	receivedSrcPort  uint16
-	receivedDstPort  uint16
-	receivedOldState string
-	receivedNewState string
+	receivedTime       time.Time
+	receivedPID        int
+	receivedComm       string
+	receivedSrcIP      net.IP
+	receivedDstIP      net.IP
+	receivedSrcPort    uint16
+	receivedDstPort    uint16
+	receivedOldState   string
+	receivedNewState   string
+	receivedSocketInfo *socketInfo
 }
 
 func newMockInserter(errorToReturnOnPrepare error,
@@ -61,7 +62,8 @@ func (mi *mockInserter) insert(ctx context.Context,
 	srcPort uint16,
 	dstPort uint16,
 	oldState string,
-	newState string) error {
+	newState string,
+	socketInfo *socketInfo) error {
 	mi.insertCalled = true
 
 	mi.receivedTime = time
@@ -73,6 +75,7 @@ func (mi *mockInserter) insert(ctx context.Context,
 	mi.receivedDstPort = dstPort
 	mi.receivedOldState = oldState
 	mi.receivedNewState = newState
+	mi.receivedSocketInfo = socketInfo
 
 	if mi.errorToReturnOnInsert != nil {
 		return mi.errorToReturnOnInsert
@@ -94,15 +97,15 @@ func (mi *mockInserter) close(ctx context.Context) error {
 type mockTableCreator struct {
 	errorToReturn error
 
-	createTableCalled bool
+	createTablesCalled bool
 }
 
 func newMockTableCreator(errorToReturn error) *mockTableCreator {
 	return &mockTableCreator{errorToReturn: errorToReturn}
 }
 
-func (mtc *mockTableCreator) createTable(ctx context.Context) error {
-	mtc.createTableCalled = true
+func (mtc *mockTableCreator) createTables(ctx context.Context) error {
+	mtc.createTablesCalled = true
 
 	if mtc.errorToReturn != nil {
 		return mtc.errorToReturn
@@ -119,7 +122,7 @@ func TestSinkerConstructor(t *testing.T) {
 		t.Errorf("expected nil error, got %q (of type %T)", err, err)
 	}
 
-	if !mockTableCreator.createTableCalled {
+	if !mockTableCreator.createTablesCalled {
 		t.Error("expected table creator to be called, but was not")
 	}
 
