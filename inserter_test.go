@@ -8,26 +8,39 @@ import (
 	"time"
 )
 
-type mockStatementPreparer struct {
-	errorToReturn error
+const expectedNumberOfPreparedStmts = 2
 
-	prepareStatementCalled   bool
-	receivedSQL              string // TODO: Should be a slice
-	receivedPreparedStmtName string // TODO: Should be a slice
+type mockStatementPreparer struct {
+	errorToReturn    error
+	errorReturnDelay int
+
+	callCount                 int
+	prepareStatementCalled    bool
+	receivedSQLs              []string
+	receivedPreparedStmtNames []string
 }
 
-func newMockStatementPreparer(errorToReturn error) *mockStatementPreparer {
-	return &mockStatementPreparer{errorToReturn: errorToReturn}
+func newMockStatementPreparer(errorToReturn error, errorReturnDelay int) *mockStatementPreparer {
+	return &mockStatementPreparer{
+		errorToReturn:             errorToReturn,
+		errorReturnDelay:          errorReturnDelay,
+		receivedSQLs:              []string{},
+		receivedPreparedStmtNames: []string{},
+	}
 }
 
 func (msp *mockStatementPreparer) prepareStatement(ctx context.Context,
 	sql string,
 	name string) error {
-	msp.prepareStatementCalled = true
-	msp.receivedSQL = sql
-	msp.receivedPreparedStmtName = name
+	defer func() {
+		msp.callCount++
+	}()
 
-	if msp.errorToReturn != nil {
+	msp.prepareStatementCalled = true
+	msp.receivedSQLs = append(msp.receivedSQLs, sql)
+	msp.receivedPreparedStmtNames = append(msp.receivedPreparedStmtNames, name)
+
+	if msp.errorToReturn != nil && msp.callCount >= msp.errorReturnDelay {
 		return msp.errorToReturn
 	}
 
@@ -37,11 +50,12 @@ func (msp *mockStatementPreparer) prepareStatement(ctx context.Context,
 type mockExecer struct {
 	errorToReturn error
 
-	execCalled    bool
-	closeCalled   bool
-	receivedSQL   string
-	receivedArgs  []interface{}
-	receivedStmts []*sqlStatement
+	execCalled         bool
+	execMultipleCalled bool
+	closeCalled        bool
+	receivedSQL        string
+	receivedArgs       []interface{}
+	receivedStmts      []*sqlStatement
 }
 
 func newMockExecer(errorToReturn error) *mockExecer {
@@ -64,7 +78,7 @@ func (me *mockExecer) exec(ctx context.Context,
 }
 
 func (me *mockExecer) execMultiple(ctx context.Context, stmts ...*sqlStatement) error {
-	me.execCalled = true
+	me.execMultipleCalled = true
 	me.receivedStmts = stmts
 
 	if me.errorToReturn != nil {
@@ -84,8 +98,8 @@ func (me *mockExecer) close(ctx context.Context) error {
 	return nil
 }
 
-func TestInsert(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)
+func TestInsertNoSocketInfo(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
 	mockExecer := newMockExecer(nil)
 	mockUID := "mock-uid"
 	mockTime := time.Now()
@@ -130,8 +144,74 @@ func TestInsert(t *testing.T) {
 	}
 }
 
-func TestInsertError(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)
+func TestInsertWithSocketInfo(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
+	mockExecer := newMockExecer(nil)
+	mockUID := "mock-uid"
+	mockTime := time.Now()
+	mockPID := 7337
+	mockComm := "mock-command"
+	mockSrcIP := net.ParseIP("1.2.3.4")
+	mockDstIP := net.ParseIP("7.3.3.7")
+	mockSrcPort := uint16(1234)
+	mockDstPort := uint16(7337)
+	mockOldState := "mock-old-state"
+	mockNewState := "mock-new-state"
+	mockSocketInfo := &socketInfo{
+		id:      "mock-socket-id",
+		iNode:   0xF00DF00D,
+		userID:  0xCAFEBABE,
+		groupID: 0xDEADBEEF,
+		state:   "mock-socket-state",
+	}
+
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+
+	if err := inserter.insert(context.TODO(),
+		mockUID,
+		mockTime,
+		mockPID,
+		mockComm,
+		mockSrcIP,
+		mockDstIP,
+		mockSrcPort,
+		mockDstPort,
+		mockOldState,
+		mockNewState,
+		mockSocketInfo); err != nil {
+		t.Errorf("expected nil error, got %q (of type %T)", err, err)
+	}
+
+	if !mockExecer.execMultipleCalled {
+		t.Error("expected execer execMultiple() to be called, but was not")
+	}
+
+	if mockExecer.receivedStmts == nil || len(mockExecer.receivedStmts) == 0 {
+		t.Error("expected execer to receive non-empty statements list, but was empty")
+	}
+
+	if len(mockExecer.receivedStmts) != expectedNumberOfPreparedStmts {
+		t.Errorf("expected execer to receive %d statements in list, but received %d",
+			expectedNumberOfPreparedStmts,
+			len(mockExecer.receivedStmts))
+	}
+
+	for i, receivedStmt := range mockExecer.receivedStmts {
+		j := i + 1
+
+		if receivedStmt.sql == "" {
+			t.Errorf("expected execer statement %d to receive non-empty prepared statement name, but was empty", j)
+		}
+		t.Logf("execer statement %d received prepared statement name: %q", j, receivedStmt.sql)
+
+		if receivedStmt.arguments == nil || len(receivedStmt.arguments) == 0 {
+			t.Errorf("expected execer statement %d to receive non-empty non-empty arguments, but was empty", j)
+		}
+	}
+}
+
+func TestInsertErrorNoSocketInfo(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
 	mockError := errors.New("mock exec error")
 	mockExecer := newMockExecer(mockError)
 	mockUID := "mock-uid"
@@ -171,37 +251,42 @@ func TestInsertError(t *testing.T) {
 	}
 }
 
-func TestInserterPrepare(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)
-	mockExecer := newMockExecer(nil)
+func TestInsertErrorWithSocketInfo(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
+	mockError := errors.New("mock exec error")
+	mockExecer := newMockExecer(mockError)
+	mockUID := "mock-uid"
+	mockTime := time.Now()
+	mockPID := 7337
+	mockComm := "mock-command"
+	mockSrcIP := net.ParseIP("1.2.3.4")
+	mockDstIP := net.ParseIP("7.3.3.7")
+	mockSrcPort := uint16(1234)
+	mockDstPort := uint16(7337)
+	mockOldState := "mock-old-state"
+	mockNewState := "mock-new-state"
+	mockSocketInfo := &socketInfo{
+		id:      "mock-socket-id",
+		iNode:   0xF00DF00D,
+		userID:  0xCAFEBABE,
+		groupID: 0xDEADBEEF,
+		state:   "mock-socket-state",
+	}
 
 	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
-	if err := inserter.prepare(context.TODO()); err != nil {
-		t.Errorf("expected nil error, got %q (of type %T)", err, err)
-	}
 
-	if !mockStmtPreparer.prepareStatementCalled {
-		t.Error("expected statementPreparer to be called, but was not")
-	}
-
-	if mockStmtPreparer.receivedPreparedStmtName == "" {
-		t.Error("expected statementPreparer to receive non-empty prepared statement name, but was empty")
-	}
-	t.Logf("statementPreparer received prepared statement name: %q", mockStmtPreparer.receivedPreparedStmtName)
-
-	if mockStmtPreparer.receivedSQL == "" {
-		t.Error("expected statementPreparer to receive non-empty SQL, but was empty")
-	}
-	t.Logf("statementPreparer received SQL: %q", mockStmtPreparer.receivedSQL)
-}
-
-func TestInserterPrepareStatementPreparerError(t *testing.T) {
-	mockError := errors.New("mock statement preparer error")
-	mockStmtPreparer := newMockStatementPreparer(mockError)
-	mockExecer := newMockExecer(nil)
-
-	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
-	err := inserter.prepare(context.TODO())
+	err := inserter.insert(context.TODO(),
+		mockUID,
+		mockTime,
+		mockPID,
+		mockComm,
+		mockSrcIP,
+		mockDstIP,
+		mockSrcPort,
+		mockDstPort,
+		mockOldState,
+		mockNewState,
+		mockSocketInfo)
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -213,8 +298,83 @@ func TestInserterPrepareStatementPreparerError(t *testing.T) {
 	}
 }
 
+func TestInserterPrepare(t *testing.T) {
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
+	mockExecer := newMockExecer(nil)
+
+	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+	if err := inserter.prepare(context.TODO()); err != nil {
+		t.Errorf("expected nil error, got %q (of type %T)", err, err)
+	}
+
+	if !mockStmtPreparer.prepareStatementCalled {
+		t.Error("expected statementPreparer to be called, but was not")
+	}
+
+	if mockStmtPreparer.receivedPreparedStmtNames == nil || len(mockStmtPreparer.receivedPreparedStmtNames) == 0 {
+		t.Error("expected statementPreparer to receive non-empty prepared statement names, but was empty")
+	}
+
+	if mockStmtPreparer.receivedSQLs == nil || len(mockStmtPreparer.receivedSQLs) == 0 {
+		t.Error("expected statementPreparer to receive non-empty SQL statements, but was empty")
+	}
+
+	if len(mockStmtPreparer.receivedPreparedStmtNames) != len(mockStmtPreparer.receivedSQLs) {
+		t.Error("expected statementPreparer to receive same number of SQL statements as prepared statement names, but did not")
+	}
+
+	if len(mockStmtPreparer.receivedPreparedStmtNames) != expectedNumberOfPreparedStmts &&
+		len(mockStmtPreparer.receivedSQLs) != expectedNumberOfPreparedStmts {
+		t.Errorf("expected execer to receive %d statements to prepare, but received %d",
+			expectedNumberOfPreparedStmts,
+			len(mockStmtPreparer.receivedPreparedStmtNames))
+	}
+
+	for i, receivedStmtName := range mockStmtPreparer.receivedPreparedStmtNames {
+		j := i + 1
+
+		if receivedStmtName == "" {
+			t.Errorf("expected statementPreparer to receive non-empty prepared statement name for statement %d, but was empty", j)
+		}
+
+		t.Logf("statementPreparer received prepared statement name for statement %d: %q", j, receivedStmtName)
+	}
+
+	for i, receivedSQL := range mockStmtPreparer.receivedSQLs {
+		j := i + 1
+
+		if receivedSQL == "" {
+			t.Errorf("expected statementPreparer to receive non-empty SQL for statement %d, but was empty", j)
+		}
+
+		t.Logf("statementPreparer received SQL for statement %d: %q", j, receivedSQL)
+	}
+}
+
+func TestInserterPrepareStatementPreparerError(t *testing.T) {
+	mockError := errors.New("mock statement preparer error")
+
+	// Ensure the error return is tested for all prepared statements
+	for i := 0; i < expectedNumberOfPreparedStmts; i++ {
+		mockStmtPreparer := newMockStatementPreparer(mockError, i)
+		mockExecer := newMockExecer(nil)
+		inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
+
+		err := inserter.prepare(context.TODO())
+		if err == nil {
+			t.Error("expected error, got nil")
+		}
+
+		t.Logf("got error %q (of type %T)", err, err)
+
+		if !errors.Is(err, mockError) {
+			t.Errorf("expected error chain to include %q, but did not", mockError)
+		}
+	}
+}
+
 func TestInserterClose(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
 	mockExecer := newMockExecer(nil)
 
 	inserter := newPreparedStatementInserter(mockStmtPreparer, mockExecer)
@@ -229,7 +389,7 @@ func TestInserterClose(t *testing.T) {
 }
 
 func TestInserterCloseError(t *testing.T) {
-	mockStmtPreparer := newMockStatementPreparer(nil)
+	mockStmtPreparer := newMockStatementPreparer(nil, 0)
 	mockError := errors.New("mock exec close error")
 	mockExecer := newMockExecer(mockError)
 

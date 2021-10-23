@@ -28,10 +28,10 @@ type execer interface {
 
 // PGXExecer executes SQL statements using the PGX library.
 type pgxExecer struct {
-	conn *pgx.Conn
+	conn conn
 }
 
-func newPGXExecer(conn *pgx.Conn) *pgxExecer {
+func newPGXExecer(conn conn) *pgxExecer {
 	return &pgxExecer{conn}
 }
 
@@ -49,8 +49,7 @@ func (e *pgxExecer) exec(ctx context.Context,
 // ExecMultiple executes the provided SQL statement(s) using the provided arguments.
 // If more than one statement is provided, they are executed atomically
 // (i.e. in a transaction).
-func (e *pgxExecer) execMultiple(ctx context.Context,
-	stmts ...*sqlStatement) (err error) {
+func (e *pgxExecer) execMultiple(ctx context.Context, stmts ...*sqlStatement) (err error) {
 
 	tx, err := e.conn.Begin(ctx)
 	if err != nil {

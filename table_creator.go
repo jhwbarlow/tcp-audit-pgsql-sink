@@ -6,7 +6,6 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
-	"github.com/jackc/pgx/v4"
 )
 
 const (
@@ -47,10 +46,10 @@ type tableCreator interface {
 // PGXTableCreator creates the database tables required to store TCP
 // state-change events using the PGX library.
 type pgxTableCreator struct {
-	conn *pgx.Conn
+	conn conn
 }
 
-func newPGXTableCreator(conn *pgx.Conn) *pgxTableCreator {
+func newPGXTableCreator(conn conn) *pgxTableCreator {
 	return &pgxTableCreator{conn}
 }
 

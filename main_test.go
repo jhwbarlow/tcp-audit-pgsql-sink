@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jhwbarlow/tcp-audit-common/pkg/event"
+	"github.com/jhwbarlow/tcp-audit-common/pkg/socketstate"
 	"github.com/jhwbarlow/tcp-audit-common/pkg/tcpstate"
 )
 
@@ -20,6 +21,7 @@ type mockInserter struct {
 	insertCalled  bool
 	closeCalled   bool
 
+	receivedUID        string
 	receivedTime       time.Time
 	receivedPID        int
 	receivedComm       string
@@ -53,7 +55,7 @@ func (mi *mockInserter) prepare(ctx context.Context) error {
 }
 
 func (mi *mockInserter) insert(ctx context.Context,
-	_ string,
+	uid string,
 	time time.Time,
 	pid int,
 	comm string,
@@ -66,6 +68,7 @@ func (mi *mockInserter) insert(ctx context.Context,
 	socketInfo *socketInfo) error {
 	mi.insertCalled = true
 
+	mi.receivedUID = uid
 	mi.receivedTime = time
 	mi.receivedPID = pid
 	mi.receivedComm = comm
@@ -171,6 +174,14 @@ func TestSink(t *testing.T) {
 		t.Errorf("expected nil Sinker construction error, got %q (of type %T)", err, err)
 	}
 
+	mockSocketInfo := &event.SocketInfo{
+		ID:          "mock-socket-id",
+		INode:       0xF00DF00D,
+		UID:         0xCAFEBABE,
+		GID:         0xDEADBEEF,
+		SocketState: socketstate.StateConnecting,
+	}
+
 	mockEvent := &event.Event{
 		Time:         time.Now(),
 		PIDOnCPU:     7337,
@@ -181,6 +192,7 @@ func TestSink(t *testing.T) {
 		DestPort:     7337,
 		OldState:     tcpstate.StateClosed,
 		NewState:     tcpstate.StateSynReceived,
+		SocketInfo:   mockSocketInfo,
 	}
 
 	if err := sinker.Sink(mockEvent); err != nil {
@@ -189,6 +201,10 @@ func TestSink(t *testing.T) {
 
 	if !mockInserter.insertCalled {
 		t.Error("expected inserter insert() to be called, but was not")
+	}
+
+	if mockInserter.receivedUID == "" {
+		t.Error("expected inserter received UID to be non-empty, but was empty")
 	}
 
 	if !mockInserter.receivedTime.Equal(mockEvent.Time) {
@@ -243,6 +259,40 @@ func TestSink(t *testing.T) {
 		t.Errorf("expected inserter received old state to be %q, but was %q",
 			mockEvent.NewState,
 			mockInserter.receivedNewState)
+	}
+
+	if mockInserter.receivedSocketInfo.uid == "" {
+		t.Error("expected inserter received socket info UID to be non-empty, but was empty")
+	}
+
+	if mockInserter.receivedSocketInfo.id != mockEvent.SocketInfo.ID {
+		t.Errorf("expected inserter received socket info ID to be %q, but was %q",
+			mockEvent.SocketInfo.ID,
+			mockInserter.receivedSocketInfo.id)
+	}
+
+	if mockInserter.receivedSocketInfo.iNode != mockEvent.SocketInfo.INode {
+		t.Errorf("expected inserter received socket info inode to be %d, but was %d",
+			mockEvent.SocketInfo.INode,
+			mockInserter.receivedSocketInfo.iNode)
+	}
+
+	if mockInserter.receivedSocketInfo.userID != mockEvent.SocketInfo.UID {
+		t.Errorf("expected inserter received socket info user ID to be %d, but was %d",
+			mockEvent.SocketInfo.UID,
+			mockInserter.receivedSocketInfo.userID)
+	}
+
+	if mockInserter.receivedSocketInfo.groupID != mockEvent.SocketInfo.GID {
+		t.Errorf("expected inserter received socket info group ID to be %d, but was %d",
+			mockEvent.SocketInfo.GID,
+			mockInserter.receivedSocketInfo.groupID)
+	}
+
+	if mockInserter.receivedSocketInfo.state != mockEvent.SocketInfo.SocketState.String() {
+		t.Errorf("expected inserter received socket info user ID to be %q, but was %q",
+			mockEvent.SocketInfo.SocketState.String(),
+			mockInserter.receivedSocketInfo.state)
 	}
 }
 

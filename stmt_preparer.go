@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-
-	"github.com/jackc/pgx/v4"
 )
 
 // StatementPreparer is an interface which describes objects which prepare
@@ -16,10 +14,10 @@ type statementPreparer interface {
 // PGXStatementPreparer prepares named SQL statements for future use using
 // the PGX library.
 type pgxStatementPreparer struct {
-	conn *pgx.Conn
+	conn conn
 }
 
-func newPGXStatementPreparer(conn *pgx.Conn) *pgxStatementPreparer {
+func newPGXStatementPreparer(conn conn) *pgxStatementPreparer {
 	return &pgxStatementPreparer{conn}
 }
 
